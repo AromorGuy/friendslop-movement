@@ -1,0 +1,811 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="First-person Three.js + Rapier movement controller with a test course for steps, ramps, jumps and ragdoll.">
+<title>Chip Stack Movement Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Instrument+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: full-bleed 3D scene; HUD pinned to the corners like a dealer's table markers. Single dark look by choice. */
+:root {
+  --felt: #0d3326;
+  --ink: #08130f;
+  --panel: rgba(8, 19, 15, 0.86);
+  --line: rgba(227, 176, 75, 0.28);
+  --gold: #e3b04b;
+  --chip-red: #d0453f;
+  --text: #f1ecdf;
+  --muted: #a9b8ad;
+  --good: #6fd39a;
+  --warn: #f08a5d;
+  --font-hud: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+[hidden] { display: none !important; }
+body {
+  margin: 0; overflow: hidden; background: var(--ink); color: var(--text);
+  font-family: var(--font-body); font-size: 14px;
+}
+#scene { position: fixed; inset: 0; display: block; width: 100%; height: 100%; }
+.hud {
+  position: fixed; font-family: var(--font-hud); pointer-events: none;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  padding: 10px 12px; font-variant-numeric: tabular-nums;
+}
+#stats {
+  top: calc(12px + env(safe-area-inset-top, 0px)); left: calc(12px + env(safe-area-inset-left, 0px));
+  width: 228px; display: grid; gap: 8px;
+}
+.row { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.row .k { color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; font-size: 11px; font-weight: 600; }
+.row .v { font-weight: 600; }
+.speed { display: grid; gap: 4px; }
+.speed-num { font-size: 28px; font-weight: 700; line-height: 1; }
+.speed-num small { font-size: 12px; color: var(--muted); font-weight: 600; margin-left: 4px; }
+.bar { position: relative; height: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: visible; }
+.bar-fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--gold); border-radius: 4px; }
+.tick { position: absolute; top: -3px; width: 1px; height: 14px; background: var(--text); opacity: 0.55; }
+.tick span { position: absolute; top: 15px; left: -10px; width: 20px; text-align: center; font-size: 9px; color: var(--muted); }
+.ticks-pad { height: 12px; }
+.pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; letter-spacing: 0.05em; }
+.pill.on { background: rgba(111, 211, 154, 0.18); color: var(--good); }
+.pill.off { background: rgba(240, 138, 93, 0.16); color: var(--warn); }
+#land {
+  top: calc(12px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%);
+  color: var(--gold); font-weight: 700; letter-spacing: 0.08em; opacity: 0; transition: opacity 0.4s;
+}
+#land.show { opacity: 1; transition: none; }
+#lockHint {
+  bottom: calc(56px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%);
+  font-size: 12px; color: var(--text); white-space: nowrap;
+}
+.card button:disabled { opacity: 0.6; cursor: progress; }
+#keys {
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px)); left: calc(12px + env(safe-area-inset-left, 0px));
+  font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 12px; max-width: min(560px, calc(100vw - 24px));
+}
+#keys b { color: var(--text); font-weight: 600; }
+#crosshair {
+  position: fixed; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
+  border-radius: 50%; background: var(--text); opacity: 0.7; pointer-events: none;
+}
+#tuneBtn {
+  position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px));
+  font: 600 13px var(--font-hud); letter-spacing: 0.06em; text-transform: uppercase;
+  background: var(--panel); color: var(--gold); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; cursor: pointer;
+}
+#tuneBtn:focus-visible, #tune button:focus-visible, #tune input:focus-visible, #start button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+#tune {
+  position: fixed; top: calc(56px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px));
+  width: 260px; max-height: calc(100% - 80px); overflow-y: auto; pointer-events: auto;
+  font-family: var(--font-body);
+}
+#tune h2 { font: 600 11px var(--font-hud); letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold); margin: 10px 0 6px; }
+#tune h2:first-child { margin-top: 0; }
+#tune label { display: grid; grid-template-columns: 1fr 70px; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; color: var(--text); }
+#tune label.check { grid-template-columns: 1fr auto; }
+#tune input[type=number] {
+  width: 100%; box-sizing: border-box; background: rgba(255,255,255,0.06); color: var(--text);
+  border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; font: 500 12px var(--font-hud); font-variant-numeric: tabular-nums;
+}
+#tune .src { font-size: 11px; color: var(--muted); line-height: 1.4; margin: 8px 0 0; }
+#tune button {
+  margin-top: 10px; width: 100%; background: transparent; color: var(--gold); border: 1px solid var(--gold);
+  border-radius: 4px; padding: 6px; font: 600 12px var(--font-hud); letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer;
+}
+#start {
+  position: fixed; inset: 0; display: grid; place-items: center; background: rgba(8, 19, 15, 0.72);
+  padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+}
+.card { max-width: 460px; display: grid; gap: 14px; }
+.card .eyebrow { font: 600 12px var(--font-hud); letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); }
+.card h1 { font: 700 clamp(30px, 6vw, 44px)/1 var(--font-hud); margin: 0; text-wrap: balance; letter-spacing: 0.01em; }
+.card p { margin: 0; line-height: 1.55; color: var(--muted); max-width: 60ch; }
+.chips { display: flex; gap: 6px; }
+.chips i { width: 18px; height: 18px; border-radius: 50%; border: 3px dashed rgba(255,255,255,0.75); }
+.card button {
+  justify-self: start; background: var(--gold); color: var(--ink); border: 0; border-radius: 6px;
+  padding: 11px 18px; font: 700 14px var(--font-hud); letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer;
+}
+.card .note { font-size: 12px; }
+#err { color: var(--warn); }
+@media (max-width: 640px) {
+  #stats { width: 170px; }
+  #keys { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { #land { transition: none; } }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="crosshair" hidden></div>
+
+<div id="stats" class="hud" aria-live="off">
+  <div class="speed">
+    <div class="row"><span class="k">Horizontal speed</span></div>
+    <div class="speed-num" id="spd">0.0<small>m/s</small></div>
+    <div class="bar"><div class="bar-fill" id="spdBar"></div><div id="ticks"></div></div>
+    <div class="ticks-pad"></div>
+  </div>
+  <div class="row"><span class="k">Vertical</span><span class="v" id="vy">0.0</span></div>
+  <div class="row"><span class="k">State</span><span class="v" id="st">Free</span></div>
+  <div class="row"><span class="k">Grounded</span><span class="pill on" id="gr">yes</span></div>
+  <div class="row"><span class="k">Can jump</span><span class="pill on" id="cj">yes</span></div>
+  <div class="row"><span class="k">Ground angle</span><span class="v" id="ga">0°</span></div>
+  <div class="row"><span class="k">FOV</span><span class="v" id="fov">80</span></div>
+</div>
+
+<div id="land" class="hud">LANDED</div>
+<div id="lockHint" class="hud" hidden>Drag to look · double-click to lock the mouse</div>
+
+<div id="keys" class="hud">
+  <span><b>WASD</b> move</span><span><b>Shift</b> sprint</span><span><b>C</b> crouch</span>
+  <span><b>Space</b> jump</span><span><b>Right mouse</b> zoom</span><span><b>R</b> ragdoll</span><span><b>T</b> respawn</span>
+</div>
+
+<button id="tuneBtn" type="button" aria-expanded="false" aria-controls="tune">Tuning</button>
+<div id="tune" class="hud" hidden></div>
+
+<div id="start">
+  <div class="card">
+    <div class="chips" aria-hidden="true"><i style="background:#d0453f"></i><i style="background:#2b5fb8"></i><i style="background:#1d1d1d"></i><i style="background:#e3b04b"></i></div>
+    <div class="eyebrow">Movement lab</div>
+    <h1>Chip Stack Movement Lab</h1>
+    <p>A first-person physics controller rebuilt from the shipped movement values: walk 8, sprint 12 and crouch 5 m/s, a +11 m/s jump, 30 m/s² surface-hugging gravity, and auto step-up to 0.5 m. The course has labeled steps, ramps and platforms so you can check each limit.</p>
+    <button id="play" type="button">Click to play</button>
+    <p class="note" id="lookNote">The game tries to lock your mouse for looking around. If it can't, drag with the left button. Esc releases the mouse.</p>
+    <p class="note" id="err" hidden></p>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
+import RAPIER from "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/rapier.es.js";
+
+// ---------- Recovered tuning (PlayerSettings / CameraSettings / project physics) ----------
+const GAME_PS = {
+  playerRadius: 0.32, playerHeadRadius: 0.4, headHeight: 1.1, headHeightCrouch: 0.6,
+  maxSpeed: 8, acceleration: 7, sprintMaxSpeed: 12, crouchMaxSpeed: 5,
+  rollMaxSpeed: 5, rollAcceleration: 15, jumpForce: 11, gravity: 30,
+  groundCheckDistance: 0.5, maxSlopeAngle: 75, maxStepHeight: 0.5, stepCheckDistance: 0.45,
+  stepUpDistance: 0.25, landThreshold: 5, ragdollDuration: 3, headMoveDuration: 0.2,
+};
+const GAME_CS = {
+  baseFOV: 80, zoomLerpSpeed: 15, runFOVMultiplier: 1.25, runFOVThreshold: 6, runLerpSpeed: 3,
+  swayAmountZAxis: 0.1, swayAmountXAxis: -0.1, swayDamping: 0.1,
+  xAmplitude: 4, yAmplitude: 8, xFrequency: 0.4, yFrequency: 0.8, headBobLerpSpeed: 20, headBobResetLerpSpeed: 50,
+  bobbingEnabled: true, sensitivity: 2,
+};
+const PS = { ...GAME_PS };
+const CS = { ...GAME_CS };
+const FIXED_DT = 0.02;           // TimeManager fixed timestep (50 Hz)
+const WORLD_GRAVITY = -15;       // Physics.gravity; the player ignores it (useGravity off)
+// Head-bob curve (identical for X and Y): looping, period 2
+const BOB_KEYS = [
+  { t: 0, v: 0, i: 3.633, o: 3.633 }, { t: 0.5, v: 1, i: 0.0063, o: 0.0063 },
+  { t: 1, v: 0, i: -3.6193, o: -3.6193 }, { t: 1.5, v: -1, i: 0, o: 0 }, { t: 2, v: 0, i: 3.8357, o: 3.8357 },
+];
+
+const State = { Free: "Free", Ragdoll: "Ragdoll", Locked: "Locked" };
+
+// ---------- Small math helpers matching Unity semantics ----------
+const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+const UP = V(0, 1, 0), DOWN = V(0, -1, 0);
+const clamp01 = (t) => Math.min(1, Math.max(0, t));
+const lerp = (a, b, t) => a + (b - a) * clamp01(t);
+const angleDeg = (a, b) => {
+  const d = a.length() * b.length();
+  return d < 1e-15 ? 0 : THREE.MathUtils.radToDeg(Math.acos(THREE.MathUtils.clamp(a.dot(b) / d, -1, 1)));
+};
+const safeNormalize = (v) => (v.lengthSq() > 1e-10 ? v.normalize() : v.set(0, 0, 0));
+const projectOnPlane = (v, n) => v.clone().sub(n.clone().multiplyScalar(v.dot(n) / Math.max(n.lengthSq(), 1e-12)));
+function smoothDamp(current, target, state, smoothTime, dt) {
+  smoothTime = Math.max(0.0001, smoothTime);
+  const omega = 2 / smoothTime, x = omega * dt;
+  const exp = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+  const change = current - target, orig = target;
+  const temp = (state.v + omega * change) * dt;
+  state.v = (state.v - omega * temp) * exp;
+  let out = (current - change) + (change + temp) * exp;
+  if ((orig - current > 0) === (out > orig)) { out = orig; state.v = (out - orig) / dt; }
+  return out;
+}
+function evalCurve(keys, t) {
+  const t0 = keys[0].t, t1 = keys[keys.length - 1].t, span = t1 - t0;
+  if (t < t0) return keys[0].v;
+  if (t > t1) t = t0 + ((t - t0) % span);
+  for (let k = 0; k < keys.length - 1; k++) {
+    const a = keys[k], b = keys[k + 1];
+    if (t <= b.t) {
+      const dt = b.t - a.t, s = (t - a.t) / dt, s2 = s * s, s3 = s2 * s;
+      return (2 * s3 - 3 * s2 + 1) * a.v + (s3 - 2 * s2 + s) * dt * a.o + (-2 * s3 + 3 * s2) * b.v + (s3 - s2) * dt * b.i;
+    }
+  }
+  return keys[keys.length - 1].v;
+}
+const easeInOutSine = (t) => -(Math.cos(Math.PI * t) - 1) / 2;
+const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+
+// ---------- Boot ----------
+const errEl = document.getElementById("err");
+const playBtn = document.getElementById("play");
+playBtn.disabled = true; playBtn.textContent = "Loading physics…";
+try { await RAPIER.init(); await document.fonts.ready; } catch (e) {
+  errEl.hidden = false;
+  errEl.textContent = `The physics engine could not load (${e?.message || e}). Reload the page to try again.`;
+  playBtn.textContent = "Couldn't load";
+  throw e;
+}
+
+const canvas = document.getElementById("scene");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+
+const scene = new THREE.Scene();
+// Blue sky: vertical gradient from deep blue overhead to a pale horizon, fog matched to the horizon
+function skyTexture() {
+  const c = document.createElement("canvas"); c.width = 16; c.height = 512;
+  const g = c.getContext("2d"), grad = g.createLinearGradient(0, 0, 0, 512);
+  grad.addColorStop(0, "#1f5fbf"); grad.addColorStop(0.35, "#4d8fe0"); grad.addColorStop(0.5, "#b9dcf7");
+  grad.addColorStop(0.52, "#cfe6f7"); grad.addColorStop(1, "#a9c9e4");
+  g.fillStyle = grad; g.fillRect(0, 0, 16, 512);
+  const t = new THREE.CanvasTexture(c);
+  t.mapping = THREE.EquirectangularReflectionMapping; t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+scene.background = skyTexture();
+scene.fog = new THREE.Fog("#cfe6f7", 45, 110);
+const camera = new THREE.PerspectiveCamera(CS.baseFOV, 1, 0.05, 200);
+
+scene.add(new THREE.HemisphereLight("#d6ebff", "#2a4a3a", 1.2));
+const sun = new THREE.DirectionalLight("#ffe7b8", 2.2);
+sun.position.set(14, 24, 10);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 1, far: 80 });
+sun.shadow.bias = -0.0004;
+scene.add(sun);
+
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+window.addEventListener("resize", resize); resize();
+
+const world = new RAPIER.World({ x: 0, y: WORLD_GRAVITY, z: 0 });
+world.timestep = FIXED_DT;
+// Generate contacts earlier so a landing doesn't sink ~0.2 m into the floor for a step (PhysX handles this with contact offsets)
+world.integrationParameters.normalizedPredictionDistance = 0.2;
+
+// ---------- Textures ----------
+function feltTexture() {
+  const c = document.createElement("canvas"); c.width = c.height = 512;
+  const g = c.getContext("2d");
+  g.fillStyle = "#145c41"; g.fillRect(0, 0, 512, 512);
+  const img = g.getImageData(0, 0, 512, 512);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = (Math.random() - 0.5) * 18;
+    img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n;
+  }
+  g.putImageData(img, 0, 0);
+  g.strokeStyle = "rgba(255,240,200,0.10)"; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(256, 0); g.lineTo(256, 512); g.moveTo(0, 256); g.lineTo(512, 256); g.stroke();
+  g.strokeStyle = "rgba(255,240,200,0.22)"; g.lineWidth = 3; g.strokeRect(0, 0, 512, 512);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  return t;
+}
+function diceTexture(pips) {
+  const c = document.createElement("canvas"); c.width = c.height = 128;
+  const g = c.getContext("2d");
+  g.fillStyle = "#f4efe4"; g.fillRect(0, 0, 128, 128);
+  g.fillStyle = "#b8282d";
+  const P = { 1: [[64, 64]], 2: [[34, 34], [94, 94]], 3: [[30, 30], [64, 64], [98, 98]], 4: [[34, 34], [94, 34], [34, 94], [94, 94]],
+    5: [[30, 30], [98, 30], [64, 64], [30, 98], [98, 98]], 6: [[34, 28], [94, 28], [34, 64], [94, 64], [34, 100], [94, 100]] };
+  for (const [x, y] of P[pips]) { g.beginPath(); g.arc(x, y, 11, 0, Math.PI * 2); g.fill(); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+function labelMesh(text, sub, width = 2.4) {
+  const c = document.createElement("canvas"); c.width = 512; c.height = 192;
+  const g = c.getContext("2d");
+  g.fillStyle = "rgba(8,19,15,0.88)"; g.fillRect(0, 0, 512, 192);
+  g.strokeStyle = "#e3b04b"; g.lineWidth = 6; g.strokeRect(3, 3, 506, 186);
+  g.fillStyle = "#f1ecdf"; g.textAlign = "center"; g.font = "700 76px 'Chakra Petch', sans-serif";
+  g.fillText(text, 256, sub ? 96 : 122);
+  if (sub) { g.fillStyle = "#e3b04b"; g.font = "600 40px 'Chakra Petch', sans-serif"; g.fillText(sub, 256, 158); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(width, width * 192 / 512), new THREE.MeshBasicMaterial({ map: t, transparent: true }));
+  return m;
+}
+
+// ---------- Level ----------
+const dynamicProps = [];
+const feltMat = new THREE.MeshStandardMaterial({ map: feltTexture(), roughness: 0.95 });
+feltMat.map.repeat.set(40, 40);
+const railMat = new THREE.MeshStandardMaterial({ color: "#5a3420", roughness: 0.6 });
+const chipColors = ["#d0453f", "#2b5fb8", "#1d1d1d", "#e3b04b", "#6c3fb3", "#2f8f5b", "#e8e2d4"];
+
+function addStatic(mesh, colliderDesc) {
+  mesh.castShadow = true; mesh.receiveShadow = true; scene.add(mesh);
+  colliderDesc.setTranslation(mesh.position.x, mesh.position.y, mesh.position.z)
+    .setRotation({ x: mesh.quaternion.x, y: mesh.quaternion.y, z: mesh.quaternion.z, w: mesh.quaternion.w })
+    .setFriction(0.6);
+  world.createCollider(colliderDesc);
+  return mesh;
+}
+function box(w, h, d, x, y, z, mat, rx = 0, ry = 0, rz = 0) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z); m.rotation.set(rx, ry, rz, "YXZ");
+  return addStatic(m, RAPIER.ColliderDesc.cuboid(w / 2, h / 2, d / 2));
+}
+function label(text, sub, x, y, z, ry = 0, width) {
+  const m = labelMesh(text, sub, width); m.position.set(x, y, z); m.rotation.y = ry; scene.add(m); return m;
+}
+
+// Floor and rails
+const floor = new THREE.Mesh(new THREE.BoxGeometry(80, 1, 80), feltMat);
+floor.position.set(0, -0.5, 0);
+addStatic(floor, RAPIER.ColliderDesc.cuboid(40, 0.5, 40));
+for (const [w, d, x, z] of [[80, 1, 0, -40], [80, 1, 0, 40], [1, 80, -40, 0], [1, 80, 40, 0]]) {
+  box(w, 1.6, d, x, 0.8, z, railMat);
+  // Invisible wall above the rail: a jump (≈1.75 m) or a ramp launch would otherwise clear it
+  world.createCollider(RAPIER.ColliderDesc.cuboid(w / 2, 20, d / 2).setTranslation(x, 20, z).setFriction(0));
+}
+
+// Step lane: chip stacks of increasing height (max climbable step is 0.5 m)
+const stepHeights = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8];
+stepHeights.forEach((h, i) => {
+  const x = -12 + i * 4, z = -10;
+  const mat = new THREE.MeshStandardMaterial({ color: chipColors[i % chipColors.length], roughness: 0.5 });
+  box(3, h, 3, x, h / 2, z, mat);
+  label(`${h.toFixed(1)} m`, h <= PS.maxStepHeight ? "step-up" : "jump", x, h + 0.9, z + 1.6, 0, 1.6);
+});
+label("Steps", "auto-climb ≤ 0.5 m", -16.5, 1.6, -8.4, 0, 2.6);
+
+// Ramp lane: slopes up to and past the 75° grounding limit
+const rampAngles = [15, 30, 45, 60, 74, 80];
+rampAngles.forEach((deg, i) => {
+  const x = -14 + i * 5.5, len = 6, rad = THREE.MathUtils.degToRad(deg);
+  const lowEdgeZ = 7, rise = Math.sin(rad) * len / 2, run = Math.cos(rad) * len / 2;
+  const mat = new THREE.MeshStandardMaterial({ color: deg <= PS.maxSlopeAngle ? "#2b5fb8" : "#d0453f", roughness: 0.55 });
+  // Low edge sits on the floor facing the spawn; the slope rises toward +z
+  const m = new THREE.Mesh(new THREE.BoxGeometry(4, 0.3, len), mat);
+  m.position.set(x, rise, lowEdgeZ + run);
+  m.quaternion.setFromAxisAngle(V(1, 0, 0), -rad);
+  addStatic(m, RAPIER.ColliderDesc.cuboid(2, 0.15, len / 2));
+  label(`${deg}°`, deg <= PS.maxSlopeAngle ? "walkable" : "too steep", x, 0.9, lowEdgeZ - 1.2, Math.PI, 1.6);
+});
+label("Ramps", "grounded ≤ 75°", -18.4, 1.6, 5.8, Math.PI, 2.6);
+
+// Platform lane: jump apex is about 11² / (2·30) ≈ 2.0 m before damping; measured ≈ 1.75 m
+const platHeights = [1, 1.5, 1.75, 2.25];
+platHeights.forEach((h, i) => {
+  const x = 18, z = -14 + i * 6;
+  const mat = new THREE.MeshStandardMaterial({ color: chipColors[(i + 3) % chipColors.length], roughness: 0.5 });
+  box(4, h, 4, x, h / 2, z, mat);
+  label(`${h} m`, h < 1.75 ? "jumpable" : h < 2 ? "barely" : "out of reach", x - 2.3, h + 0.8, z, -Math.PI / 2, 1.6);
+});
+label("Platforms", "jump apex ≈ 1.75 m", 15.4, 1.8, -19, -Math.PI / 2, 2.8);
+
+// Pushable dice (dynamic, mass 1)
+const diceMats = [1, 6, 2, 5, 3, 4].map((p) => new THREE.MeshStandardMaterial({ map: diceTexture(p), roughness: 0.4 }));
+for (let i = 0; i < 9; i++) {
+  const s = 0.7, x = -6 + (i % 3) * 1.4, z = 2 + Math.floor(i / 3) * 1.4;
+  const m = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), diceMats);
+  m.castShadow = m.receiveShadow = true; scene.add(m);
+  const rb = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(x, s / 2 + 0.01, z));
+  world.createCollider(RAPIER.ColliderDesc.cuboid(s / 2, s / 2, s / 2).setMass(1).setFriction(0.6), rb);
+  dynamicProps.push({ m, rb });
+}
+label("Dice", "push them around", -4.6, 1.6, 5.6, Math.PI, 2.2);
+
+// ---------- Player ----------
+const SPAWN = V(0, 0.42, -2);
+const playerMat = { friction: 0.1, restitution: 0.1 };
+const player = world.createRigidBody(
+  RAPIER.RigidBodyDesc.dynamic().setTranslation(SPAWN.x, SPAWN.y, SPAWN.z)
+    .setLinearDamping(0.4).setAngularDamping(0.5).setGravityScale(0).setCcdEnabled(true).lockRotations()
+);
+const capsuleHalf = (1.2 - 2 * PS.playerRadius) / 2;
+world.createCollider(
+  RAPIER.ColliderDesc.capsule(capsuleHalf, PS.playerRadius).setTranslation(0, 0.2, 0).setMass(0.7)
+    .setFriction(playerMat.friction).setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
+    .setRestitution(playerMat.restitution).setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min),
+  player
+);
+const headCollider = world.createCollider(
+  RAPIER.ColliderDesc.ball(PS.playerHeadRadius).setTranslation(0, PS.headHeight, 0).setMass(0.3)
+    .setFriction(playerMat.friction).setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
+    .setRestitution(playerMat.restitution).setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min),
+  player
+);
+const groundBall = new RAPIER.Ball(PS.playerRadius - 0.01);
+const headBall = new RAPIER.Ball(PS.playerHeadRadius - 0.01);
+const IDQ = { x: 0, y: 0, z: 0, w: 1 };
+
+const P = {
+  state: State.Free, isGrounded: false, canJump: false, groundVector: DOWN.clone(),
+  moveInput: new THREE.Vector2(), horizontalMoveDirection: V(), previousVelocity: V(),
+  lastJumpTime: -1, ragdollTimer: -1, rotTween: null, headY: PS.headHeight, headTween: null,
+  yaw: 0, pitch: 0, groundAngle: 0,
+};
+const input = { keys: new Set(), sprint: false, crouch: false, zoom: false };
+let simTime = 0;
+
+const vec = (v) => V(v.x, v.y, v.z);
+const bodyPos = () => vec(player.translation());
+const bodyQuat = () => { const r = player.rotation(); return new THREE.Quaternion(r.x, r.y, r.z, r.w); };
+const bodyUp = () => UP.clone().applyQuaternion(bodyQuat());
+const headWorld = () => bodyPos().add(V(0, P.headY, 0).applyQuaternion(bodyQuat()));
+const headForward = () => V(-Math.sin(P.yaw) * Math.cos(P.pitch), Math.sin(P.pitch), -Math.cos(P.yaw) * Math.cos(P.pitch));
+const headRight = () => V(Math.cos(P.yaw), 0, -Math.sin(P.yaw));
+const toi = (h) => h.time_of_impact ?? h.timeOfImpact ?? h.toi;
+
+function castBall(shape, origin, dist) {
+  return world.castShape(origin, IDQ, DOWN, shape, 0, dist, true, undefined, undefined, undefined, player);
+}
+function ray(origin, dir, dist, withNormal = false) {
+  const r = new RAPIER.Ray(origin, dir);
+  return withNormal ? world.castRayAndGetNormal(r, dist, true, undefined, undefined, undefined, player)
+    : world.castRay(r, dist, true, undefined, undefined, undefined, player);
+}
+
+function setPlayerState(next) {
+  if (next === State.Ragdoll) P.ragdollTimer = simTime + PS.ragdollDuration;
+  else P.ragdollTimer = -1;
+  if (next === P.state) return;
+  P.state = next;
+  player.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  player.lockRotations(next !== State.Ragdoll, true);
+  if (next === State.Free) {
+    player.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    P.rotTween = { from: bodyQuat(), start: simTime, dur: 0.5 };
+  } else P.rotTween = null;
+}
+
+function checkGround() {
+  const up = bodyUp(), pos = bodyPos();
+  const center = pos.clone().add(up.multiplyScalar(PS.playerRadius - PS.playerHeadRadius));
+  const origin = center.clone().add(V(0, 0.04, 0));
+  const hit = castBall(groundBall, origin, PS.groundCheckDistance + 0.05);
+  P.isGrounded = false; P.groundVector.copy(DOWN); P.groundAngle = 0;
+  if (!hit) return;
+  // witness1 is the world-space contact point on the collider that was hit
+  const toPoint = vec(hit.witness1).sub(center);
+  const a = angleDeg(toPoint, DOWN);
+  if (a > PS.maxSlopeAngle) return;
+  P.isGrounded = true; P.groundAngle = a;
+  P.groundVector.copy(safeNormalize(toPoint));
+}
+
+function checkJump() {
+  let origin = headWorld().add(V(0, 0.04, 0));
+  let dist = P.headY + PS.groundCheckDistance + 0.05, shape = headBall;
+  if (P.state === State.Ragdoll) {
+    origin = bodyPos().add(bodyUp().multiplyScalar(PS.playerRadius - PS.playerHeadRadius)).add(V(0, 0.04, 0));
+    dist = PS.groundCheckDistance + 0.05; shape = groundBall;
+  }
+  P.canJump = !!castBall(shape, origin, dist);
+}
+
+function moveFree(dv) {
+  const fwd = projectOnPlane(headForward(), UP), right = projectOnPlane(headRight(), UP);
+  P.horizontalMoveDirection.copy(safeNormalize(fwd.multiplyScalar(P.moveInput.y).add(right.multiplyScalar(P.moveInput.x))));
+  const dir = safeNormalize(projectOnPlane(P.horizontalMoveDirection, P.groundVector));
+  let speed = PS.maxSpeed;
+  if (input.crouch) speed = PS.crouchMaxSpeed; else if (input.sprint) speed = PS.sprintMaxSpeed;
+  const v = player.linvel();
+  const force = dir.multiplyScalar(speed).sub(V(v.x, 0, v.z)).multiplyScalar(PS.acceleration);
+  dv.addScaledVector(force, FIXED_DT); // ForceMode.Acceleration
+}
+
+function stepClimb() {
+  if (P.state !== State.Free) return;
+  const dir = P.horizontalMoveDirection;
+  if (dir.lengthSq() < 1e-6) return;
+  const up = bodyUp(), pos = bodyPos();
+  const foot = pos.clone().addScaledVector(up, -PS.playerRadius);
+  const low = foot.clone().addScaledVector(up, 0.01);
+  const h1 = ray(low, dir, PS.stepCheckDistance);
+  if (!h1) return;
+  const d1 = toi(h1), p1 = low.clone().addScaledVector(dir, d1);
+  const high = foot.clone().addScaledVector(up, PS.maxStepHeight);
+  if (ray(high, dir, d1)) return;
+  const downFrom = high.clone().addScaledVector(dir, d1 + 0.01);
+  const h3 = ray(downFrom, DOWN, PS.maxStepHeight + 0.01, true);
+  if (!h3 || angleDeg(vec(h3.normal), UP) > 5) return;
+  const p3 = downFrom.clone().addScaledVector(DOWN, toi(h3));
+  const lift = (p3.y - p1.y + 0.1) * PS.stepUpDistance;
+  player.setTranslation({ x: pos.x, y: pos.y + lift, z: pos.z }, true);
+}
+
+function flash(text, ms = 60) {
+  const el = document.getElementById("land");
+  el.textContent = text;
+  el.classList.add("show"); clearTimeout(flash.t);
+  flash.t = setTimeout(() => el.classList.remove("show"), ms);
+}
+function onLand(impact) { flash(`LANDED  ${impact.toFixed(1)} m/s`); }
+
+function fixedStep() {
+  const dv = V();
+  checkGround();
+  if (P.state === State.Free) moveFree(dv);
+  stepClimb();
+  if (P.state !== State.Locked && PS.gravity !== 0) dv.addScaledVector(P.groundVector, PS.gravity * FIXED_DT);
+  // HandleVelocityChange reads the velocity before this step's forces, as in Unity
+  const v = vec(player.linvel());
+  const deltaY = v.y - P.previousVelocity.y;
+  if (P.isGrounded && deltaY >= PS.landThreshold && v.y < 1) onLand(deltaY);
+  P.previousVelocity.copy(v);
+  player.setLinvel({ x: v.x + dv.x, y: v.y + dv.y, z: v.z + dv.z }, true);
+
+  headCollider.setTranslationWrtParent({ x: 0, y: P.headY, z: 0 });
+  if (P.rotTween) {
+    const k = easeOutCubic(clamp01((simTime - P.rotTween.start) / P.rotTween.dur));
+    const q = P.rotTween.from.clone().slerp(new THREE.Quaternion(), k);
+    player.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
+    if (k >= 1) P.rotTween = null;
+  }
+  if (P.ragdollTimer > 0 && simTime >= P.ragdollTimer) setPlayerState(State.Free);
+
+  prevPos.copy(bodyPos()); prevQuat.copy(bodyQuat());
+  world.step();
+  simTime += FIXED_DT;
+  if (bodyPos().y < -20) { respawn(); flash("Fell off the table, back to spawn", 1500); }
+}
+
+function jump() {
+  if (P.state === State.Locked || !P.canJump) return;
+  const v = player.linvel();
+  player.setLinvel({ x: v.x, y: PS.jumpForce, z: v.z }, true); // zero Y, then VelocityChange up
+}
+function onJumpPressed() {
+  if (simTime - P.lastJumpTime < 0.05) return;
+  P.lastJumpTime = simTime;
+  checkJump(); jump();
+}
+function crouch(pressed) {
+  if (P.state === State.Locked) return;
+  P.headTween = { from: P.headY, to: pressed ? PS.headHeightCrouch : PS.headHeight, start: performance.now(), dur: PS.headMoveDuration * 1000 };
+}
+function triggerRagdoll() {
+  if (P.state !== State.Free) return;
+  setPlayerState(State.Ragdoll);
+  const r = () => (Math.random() * 2 - 1) * 5;
+  player.setAngvel({ x: r(), y: r(), z: r() }, true);
+  const push = UP.clone().multiplyScalar(10).addScaledVector(headForward(), 10);
+  player.setLinvel({ x: push.x, y: push.y, z: push.z }, true);
+}
+function respawn() {
+  setPlayerState(State.Free);
+  P.rotTween = null;
+  player.setRotation(IDQ, true);
+  player.setTranslation(SPAWN, true);
+  player.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  P.previousVelocity.set(0, 0, 0);
+  prevPos.copy(SPAWN); prevQuat.identity();
+}
+
+// ---------- Camera (PlayerCameraController) ----------
+const camState = {
+  baseFOV: CS.baseFOV, runMul: 1, prevHead: null, tiltX: 0, tiltZ: 0, tvx: { v: 0 }, tvz: { v: 0 },
+  xScroll: 0, yScroll: 0, offset: V(), bob: V(), hasReset: false,
+};
+const lookQuat = new THREE.Quaternion(), swayQuat = new THREE.Quaternion();
+const prevPos = SPAWN.clone(), prevQuat = new THREE.Quaternion();
+
+function updateCamera(dt, alpha) {
+  const pos = prevPos.clone().lerp(bodyPos(), alpha);
+  const q = prevQuat.clone().slerp(bodyQuat(), alpha);
+  const head = pos.add(V(0, P.headY, 0).applyQuaternion(q));
+  lookQuat.setFromEuler(new THREE.Euler(P.pitch, P.yaw, 0, "YXZ"));
+  const v = vec(player.linvel()), flat = projectOnPlane(v, UP), flatSpeed = flat.length();
+
+  // FOV
+  const targetFov = input.zoom ? CS.baseFOV * 0.7 : CS.baseFOV;
+  camState.baseFOV = lerp(camState.baseFOV, targetFov, CS.zoomLerpSpeed * dt);
+  const runTarget = input.sprint && flatSpeed > CS.runFOVThreshold ? CS.runFOVMultiplier : 1;
+  camState.runMul = lerp(camState.runMul, runTarget, CS.runLerpSpeed * dt);
+
+  // Head sway: tilt from the head's local velocity
+  if (!camState.prevHead) camState.prevHead = head.clone();
+  const hv = head.clone().sub(camState.prevHead).divideScalar(Math.max(dt, 0.0001));
+  camState.prevHead.copy(head);
+  const local = hv.applyQuaternion(lookQuat.clone().invert());
+  const forwardSpeed = -local.z, rightSpeed = local.x;
+  // Unity: pitch = forward * swayX (-0.1), roll = -right * swayZ (0.1); signs converted to three.js axes
+  camState.tiltX = smoothDamp(camState.tiltX, -forwardSpeed * CS.swayAmountXAxis, camState.tvx, CS.swayDamping, dt);
+  camState.tiltZ = smoothDamp(camState.tiltZ, rightSpeed * CS.swayAmountZAxis, camState.tvz, CS.swayDamping, dt);
+  swayQuat.setFromEuler(new THREE.Euler(THREE.MathUtils.degToRad(camState.tiltX), 0, THREE.MathUtils.degToRad(camState.tiltZ)));
+
+  // Head bob
+  if (!CS.bobbingEnabled) camState.bob.set(0, 0, 0);
+  else if (P.isGrounded && flatSpeed > 0.1) {
+    camState.hasReset = false;
+    camState.xScroll += dt * CS.xFrequency * flatSpeed;
+    camState.yScroll += dt * CS.yFrequency * flatSpeed;
+    camState.offset.x = evalCurve(BOB_KEYS, camState.xScroll) * CS.xAmplitude * flatSpeed / 1000;
+    camState.offset.y = evalCurve(BOB_KEYS, camState.yScroll) * CS.yAmplitude * flatSpeed / 1000;
+    camState.bob.lerp(camState.offset, clamp01(dt * CS.headBobLerpSpeed));
+  } else {
+    if (!camState.hasReset) { camState.hasReset = true; camState.xScroll = camState.yScroll = 0; camState.offset.set(0, 0, 0); }
+    camState.bob.lerp(V(), clamp01(dt * CS.headBobResetLerpSpeed));
+  }
+
+  camera.fov = camState.baseFOV * camState.runMul;
+  camera.updateProjectionMatrix();
+  camera.position.copy(head).add(camState.bob.clone().applyQuaternion(lookQuat));
+  camera.quaternion.copy(lookQuat).multiply(swayQuat);
+}
+
+// ---------- Input ----------
+const startEl = document.getElementById("start"), crosshair = document.getElementById("crosshair");
+const lockHint = document.getElementById("lockHint");
+let dragging = false, playing = false;
+const isLocked = () => document.pointerLockElement === canvas;
+
+function refreshMoveInput() {
+  const k = input.keys;
+  const x = (k.has("KeyD") || k.has("ArrowRight") ? 1 : 0) - (k.has("KeyA") || k.has("ArrowLeft") ? 1 : 0);
+  const y = (k.has("KeyW") || k.has("ArrowUp") ? 1 : 0) - (k.has("KeyS") || k.has("ArrowDown") ? 1 : 0);
+  P.moveInput.set(x, y);
+  if (P.moveInput.lengthSq() > 1) P.moveInput.normalize();
+}
+window.addEventListener("keydown", (e) => {
+  if (!playing || e.target.closest?.("#tune")) return;
+  if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) e.preventDefault();
+  if (e.repeat) return;
+  input.keys.add(e.code);
+  if (e.code === "ShiftLeft" || e.code === "ShiftRight") input.sprint = true;
+  if (e.code === "KeyC") { input.crouch = true; crouch(true); }
+  if (e.code === "Space") onJumpPressed();
+  if (e.code === "KeyR") triggerRagdoll();
+  if (e.code === "KeyT") respawn();
+  refreshMoveInput();
+});
+window.addEventListener("keyup", (e) => {
+  input.keys.delete(e.code);
+  if (e.code === "ShiftLeft" || e.code === "ShiftRight") input.sprint = false;
+  if (e.code === "KeyC") { input.crouch = false; crouch(false); }
+  refreshMoveInput();
+});
+window.addEventListener("blur", () => { input.keys.clear(); input.sprint = input.crouch = input.zoom = false; crouch(false); refreshMoveInput(); });
+
+function look(dx, dy) {
+  const k = CS.sensitivity * 0.05 * Math.PI / 180; // degrees per pixel scales with the in-game sensitivity value
+  P.yaw -= dx * k;
+  P.pitch = THREE.MathUtils.clamp(P.pitch - dy * k, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01);
+}
+// Mouse lock is optional: without it, drag with the left button to look. Losing the lock never pauses the game.
+// Chrome can report one huge movementX/Y while the pointer is locked (and on the first event after locking),
+// which spins the camera in a single frame. Skip that first event and any delta too large to be a real hand movement.
+const MAX_MOUSE_DELTA = 250;
+let skipNextMove = false;
+document.addEventListener("mousemove", (e) => {
+  if (!isLocked() && !dragging) return;
+  if (skipNextMove) { skipNextMove = false; return; }
+  if (Math.abs(e.movementX) > MAX_MOUSE_DELTA || Math.abs(e.movementY) > MAX_MOUSE_DELTA) return;
+  look(e.movementX, e.movementY);
+});
+canvas.addEventListener("mousedown", (e) => {
+  if (e.button === 2) input.zoom = true;
+  if (e.button === 0 && !isLocked()) { dragging = true; skipNextMove = true; }
+});
+window.addEventListener("mouseup", (e) => { if (e.button === 2) input.zoom = false; if (e.button === 0) dragging = false; });
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+function tryLock() {
+  // Raw (unadjusted) movement avoids Chrome's acceleration glitches; fall back to a plain lock where it isn't supported
+  const plain = () => { try { Promise.resolve(canvas.requestPointerLock()).catch(() => {}); } catch { /* not supported here */ } };
+  try {
+    const p = canvas.requestPointerLock({ unadjustedMovement: true });
+    if (p && p.catch) p.catch((err) => { if (err?.name === "NotSupportedError") plain(); });
+  } catch { plain(); }
+}
+function start() {
+  playing = true; startEl.hidden = true; crosshair.hidden = false;
+  lockHint.hidden = isLocked();
+  tryLock();
+}
+playBtn.addEventListener("click", start);
+canvas.addEventListener("dblclick", () => { if (playing && !isLocked()) tryLock(); });
+document.addEventListener("pointerlockchange", () => {
+  lockHint.hidden = isLocked() || !playing;
+  skipNextMove = true;
+});
+if (!matchMedia("(pointer: fine)").matches) document.getElementById("lookNote").textContent = "This lab needs a keyboard and mouse.";
+playBtn.disabled = false; playBtn.textContent = "Click to play";
+
+// ---------- Tuning panel ----------
+const tuneEl = document.getElementById("tune"), tuneBtn = document.getElementById("tuneBtn");
+const tuneFields = [
+  ["Movement", PS, [["maxSpeed", "Walk speed"], ["sprintMaxSpeed", "Sprint speed"], ["crouchMaxSpeed", "Crouch speed"], ["acceleration", "Acceleration"], ["jumpForce", "Jump velocity"], ["gravity", "Gravity"]]],
+  ["Terrain", PS, [["maxSlopeAngle", "Max slope (°)"], ["maxStepHeight", "Max step (m)"], ["stepUpDistance", "Step-up factor"], ["groundCheckDistance", "Ground check (m)"]]],
+  ["Camera", CS, [["baseFOV", "Field of view"], ["sensitivity", "Mouse sensitivity"], ["runFOVMultiplier", "Sprint FOV ×"]]],
+];
+function buildTune() {
+  let html = "";
+  for (const [title, obj, fields] of tuneFields) {
+    html += `<h2>${title}</h2>`;
+    for (const [key, name] of fields) html += `<label>${name}<input type="number" step="any" id="t-${key}" data-key="${key}" data-obj="${obj === PS ? "ps" : "cs"}" value="${obj[key]}"></label>`;
+  }
+  html += `<label class="check">Head bob<input type="checkbox" id="t-bob" ${CS.bobbingEnabled ? "checked" : ""}></label>`;
+  html += `<button type="button" id="t-reset">Reset to game values</button>`;
+  html += `<p class="src">Defaults come from the game's PlayerSettings and CameraSettings assets. Fixed timestep 50 Hz, mass 1, linear damping 0.4, friction 0.1 (minimum combine).</p>`;
+  tuneEl.innerHTML = html;
+  tuneEl.querySelectorAll("input[type=number]").forEach((inp) => inp.addEventListener("input", () => {
+    const n = parseFloat(inp.value); if (!Number.isFinite(n)) return;
+    (inp.dataset.obj === "ps" ? PS : CS)[inp.dataset.key] = n;
+  }));
+  document.getElementById("t-bob").addEventListener("change", (e) => { CS.bobbingEnabled = e.target.checked; });
+  document.getElementById("t-reset").addEventListener("click", () => { Object.assign(PS, GAME_PS); Object.assign(CS, GAME_CS); buildTune(); });
+}
+buildTune();
+tuneBtn.addEventListener("click", () => {
+  tuneEl.hidden = !tuneEl.hidden; tuneBtn.setAttribute("aria-expanded", String(!tuneEl.hidden));
+  if (!tuneEl.hidden && isLocked()) document.exitPointerLock();
+  else if (tuneEl.hidden && playing) tryLock();
+});
+
+// ---------- HUD ----------
+const MAX_BAR = 16;
+const ticksEl = document.getElementById("ticks");
+for (const [v, n] of [[5, "C"], [8, "W"], [12, "S"]]) ticksEl.insertAdjacentHTML("beforeend", `<div class="tick" style="left:${(v / MAX_BAR) * 100}%"><span>${n} ${v}</span></div>`);
+const el = (id) => document.getElementById(id);
+const hud = { spd: el("spd"), bar: el("spdBar"), vy: el("vy"), st: el("st"), gr: el("gr"), cj: el("cj"), ga: el("ga"), fov: el("fov") };
+let hudTimer = 0;
+function setPill(node, on) { node.textContent = on ? "yes" : "no"; node.className = "pill " + (on ? "on" : "off"); }
+function updateHud(dt) {
+  hudTimer += dt; if (hudTimer < 0.08) return; hudTimer = 0;
+  const v = player.linvel(), flat = Math.hypot(v.x, v.z);
+  hud.spd.innerHTML = `${flat.toFixed(1)}<small>m/s</small>`;
+  hud.bar.style.width = `${Math.min(100, (flat / MAX_BAR) * 100)}%`;
+  hud.vy.textContent = `${v.y >= 0 ? "+" : ""}${v.y.toFixed(1)} m/s`;
+  hud.st.textContent = P.state + (input.crouch ? " · crouch" : input.sprint ? " · sprint" : "");
+  setPill(hud.gr, P.isGrounded);
+  checkJump(); setPill(hud.cj, P.canJump);
+  hud.ga.textContent = P.isGrounded ? `${P.groundAngle.toFixed(0)}°` : "airborne";
+  hud.fov.textContent = camera.fov.toFixed(0);
+}
+
+// ---------- Loop ----------
+let last = performance.now(), acc = 0;
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (P.headTween) {
+    const t = clamp01((now - P.headTween.start) / P.headTween.dur);
+    P.headY = P.headTween.from + (P.headTween.to - P.headTween.from) * easeInOutSine(t);
+    if (t >= 1) P.headTween = null;
+  }
+  acc += dt;
+  let steps = 0;
+  while (acc >= FIXED_DT && steps < 5) { fixedStep(); acc -= FIXED_DT; steps++; }
+  if (steps === 5) acc = 0;
+  for (const p of dynamicProps) {
+    const t = p.rb.translation(), r = p.rb.rotation();
+    p.m.position.set(t.x, t.y, t.z); p.m.quaternion.set(r.x, r.y, r.z, r.w);
+  }
+  updateCamera(dt, acc / FIXED_DT);
+  updateHud(dt);
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+P.yaw = Math.PI; // face the course
+// Console handle for checking behaviour, e.g. __lab.tick(50) runs 50 physics steps
+window.__lab = { P, PS, CS, player, world, RAPIER, castBall, groundBall, input, onJumpPressed, triggerRagdoll, refreshMoveInput, respawn,
+  tick: (n) => { for (let i = 0; i < n; i++) fixedStep(); } };
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
